@@ -2,11 +2,11 @@ name: 人民幣匯率監控
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 每天台灣時間 09:00（UTC 01:00）
+    - cron: '*/5 * * * *'  # 每5分鐘檢查一次
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 使用 Node.js 24
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   check-rate:
@@ -16,13 +16,13 @@ jobs:
       - name: Checkout 程式碼
         uses: actions/checkout@v4
 
-      - name: 還原匯率歷史紀錄
+      - name: 還原冷卻時間紀錄
         uses: actions/cache@v4
         with:
-          path: rate_history.json
-          key: rate-history-${{ github.run_id }}
+          path: last_alert.json
+          key: last-alert-${{ github.run_id }}
           restore-keys: |
-            rate-history-
+            last-alert-
 
       - name: 安裝套件
         run: pip install requests
@@ -33,9 +33,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python rate_agent.py
 
-      - name: 儲存匯率歷史紀錄
+      - name: 儲存冷卻時間紀錄
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: rate_history.json
-          key: rate-history-${{ github.run_id }}
+          path: last_alert.json
+          key: last-alert-${{ github.run_id }}
