@@ -2,8 +2,11 @@ name: 人民幣匯率監控
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '0 1 * * *'   # 每天台灣時間 09:00（UTC 01:00）
   workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 使用 Node.js 24
 
 jobs:
   check-rate:
