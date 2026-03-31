@@ -1,7 +1,7 @@
 """
 人民幣/台幣匯率監控 Agent
-- 使用 frankfurter.app 一次拉取30天歷史匯率（完全免費）
-- 創30天低點時發 Telegram 提醒
+- 使用 fawazahmed0/exchange-api（免費、無需 key、支援歷史查詢）
+- 逐天拉取30天歷史，計算統計後發 Telegram 通知
 """
 
 import os
@@ -14,31 +14,49 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 DAYS_WINDOW = 30
 
 
-# ── 1. 一次拉取30天歷史匯率 ────────────────────────────
+# ── 1. 取得指定日期的 CNY→TWD 匯率 ────────────────────
+
+def get_rate_on_date(date_str: str) -> float:
+    """
+    date_str 格式：YYYY-MM-DD
+    使用 jsDelivr CDN 備援，確保穩定
+    """
+    urls = [
+        f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date_str}/v1/currencies/cny.json",
+        f"https://{date_str}.currency-api.pages.dev/v1/currencies/cny.json",
+    ]
+    for url in urls:
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return round(data["cny"]["twd"], 4)
+        except Exception:
+            continue
+    raise Exception(f"無法取得 {date_str} 的匯率")
+
+
+# ── 2. 拉取30天歷史匯率 ────────────────────────────────
 
 def fetch_30d_rates() -> list:
-    """用 frankfurter.app 一次拿30天 CNY→TWD 歷史匯率"""
-    today = datetime.now()
-    start = (today - timedelta(days=DAYS_WINDOW)).strftime("%Y-%m-%d")
-    end = today.strftime("%Y-%m-%d")
-
-    url = f"https://api.frankfurter.app/{start}..{end}?from=CNY&to=TWD"
-    print(f"拉取匯率：{url}")
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-
-    # data["rates"] = {"2026-03-01": {"TWD": 4.63}, ...}
     rates = []
-    for date_str, currencies in sorted(data["rates"].items()):
-        rate = round(currencies["TWD"], 4)
-        rates.append({"date": date_str, "rate": rate})
-        print(f"  {date_str}: {rate} TWD")
+    today = datetime.now()
+    print("正在拉取30天歷史匯率...")
+
+    for i in range(DAYS_WINDOW, -1, -1):
+        date = today - timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+        try:
+            rate = get_rate_on_date(date_str)
+            rates.append({"date": date_str, "rate": rate})
+            print(f"  {date_str}: {rate} TWD")
+        except Exception as e:
+            print(f"  {date_str}: 跳過（{e}）")
 
     return rates
 
 
-# ── 2. 分析是否創低點 ──────────────────────────────────
+# ── 3. 分析是否創低點 ──────────────────────────────────
 
 def analyze(history: list, today_rate: float) -> dict:
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -56,7 +74,7 @@ def analyze(history: list, today_rate: float) -> dict:
     }
 
 
-# ── 3. 發送 Telegram ───────────────────────────────────
+# ── 4. 發送 Telegram ───────────────────────────────────
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -100,7 +118,7 @@ def build_message(today_rate: float, a: dict) -> str:
     return "\n".join(lines)
 
 
-# ── 4. 主流程 ──────────────────────────────────────────
+# ── 5. 主流程 ──────────────────────────────────────────
 
 def main():
     print(f"[{datetime.now()}] 開始執行...")
