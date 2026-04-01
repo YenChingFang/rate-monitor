@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: rate-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn bot_server:app
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
