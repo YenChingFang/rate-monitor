@@ -1,13 +1,13 @@
 """
 人民幣/台幣匯率監控 Agent
 - 每5分鐘檢查一次（由 GitHub Actions 觸發）
-- 每天早上9點發日報
-- 7天內創低點時立即發警報（每小時最多通知一次，避免洗版）
+- 每天早上9點發日報（UTC 01:xx 小時內第一次執行）
+- 7天內創低點時立即發警報（每小時最多通知一次）
 """
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -15,7 +15,7 @@ import requests
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-ALERT_COOLDOWN_FILE = Path("last_alert.json")  # 記錄上次警報時間
+ALERT_COOLDOWN_FILE = Path("last_alert.json")  # 記錄上次警報時間與今日日報狀態
 
 
 # ── 1. 取得當前匯率 ────────────────────────────────────
@@ -54,8 +54,8 @@ def get_rate_on_date(date_str: str) -> float:
 
 def fetch_history(days: int) -> list:
     rates = []
-    today = datetime.now()
-    for i in range(days, 0, -1):  # 不含今天
+    today = datetime.now(timezone.utc)
+    for i in range(days, 0, -1):
         date_str = (today - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
             rate = get_rate_on_date(date_str)
@@ -65,34 +65,41 @@ def fetch_history(days: int) -> list:
     return rates
 
 
-# ── 3. 冷卻時間控制（避免重複通知）────────────────────
+# ── 3. 狀態管理（警報冷卻 + 日報紀錄）────────────────
 
-def load_last_alert() -> dict:
+def load_state() -> dict:
     if ALERT_COOLDOWN_FILE.exists():
         return json.loads(ALERT_COOLDOWN_FILE.read_text())
     return {}
 
-def save_last_alert(data: dict):
+def save_state(data: dict):
     ALERT_COOLDOWN_FILE.write_text(json.dumps(data))
 
-def can_send_alert(cooldown_minutes: int = 60) -> bool:
-    """距離上次警報超過 cooldown_minutes 分鐘才能再發"""
-    data = load_last_alert()
-    if "last_alert_time" not in data:
+def can_send_alert(state: dict, cooldown_minutes: int = 60) -> bool:
+    if "last_alert_time" not in state:
         return True
-    last = datetime.fromisoformat(data["last_alert_time"])
-    return (datetime.now() - last).total_seconds() > cooldown_minutes * 60
+    last = datetime.fromisoformat(state["last_alert_time"])
+    return (datetime.now(timezone.utc) - last).total_seconds() > cooldown_minutes * 60
 
-def record_alert():
-    save_last_alert({"last_alert_time": datetime.now().isoformat()})
+def already_sent_daily(state: dict) -> bool:
+    """今天（UTC 日期）是否已發過日報"""
+    today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return state.get("last_daily_date") == today_utc
+
+def record_alert(state: dict) -> dict:
+    state["last_alert_time"] = datetime.now(timezone.utc).isoformat()
+    return state
+
+def record_daily(state: dict) -> dict:
+    state["last_daily_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return state
 
 
 # ── 4. 判斷是否為每天日報時間 ──────────────────────────
 
 def is_daily_report_time() -> bool:
-    """台灣時間 09:00（UTC 01:00），允許±5分鐘誤差"""
-    now_utc = datetime.utcnow()
-    return now_utc.hour == 1 and now_utc.minute < 5
+    """台灣時間 09:00 = UTC 01:xx，整個小時內都算"""
+    return datetime.now(timezone.utc).hour == 1
 
 
 # ── 5. 發送 Telegram ───────────────────────────────────
@@ -106,7 +113,7 @@ def send_telegram(text: str):
 # ── 6. 組裝訊息 ────────────────────────────────────────
 
 def build_alert_message(today_rate: float, min_7d: float) -> str:
-    now = datetime.now().strftime("%Y/%m/%d %H:%M")
+    now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M")
     drop = round(min_7d - today_rate, 4)
     return "\n".join([
         f"🚨 人民幣匯率警報 {now}",
@@ -121,7 +128,7 @@ def build_alert_message(today_rate: float, min_7d: float) -> str:
 
 
 def build_daily_message(today_rate: float, history_7d: list, history_30d: list) -> str:
-    today = datetime.now().strftime("%Y/%m/%d")
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d")
 
     def stats(history):
         rates = [h["rate"] for h in history]
@@ -131,7 +138,6 @@ def build_daily_message(today_rate: float, history_7d: list, history_30d: list) 
             "min": min(rates),
             "max": max(rates),
             "avg": round(sum(rates) / len(rates), 4),
-            "days": len(rates),
         }
 
     s7 = stats(history_7d)
@@ -149,7 +155,7 @@ def build_daily_message(today_rate: float, history_7d: list, history_30d: list) 
         if rate_range > 0:
             position = int((today_rate - s7["min"]) / rate_range * 100)
             bar = "🟩" * (position // 20) + "⬜" * (5 - position // 20)
-            lines += [f"便宜程度(7天)：{bar}（{100 - position}% 划算）"]
+            lines.append(f"便宜程度(7天)：{bar}（{100 - position}% 划算）")
         lines += [
             f"",
             f"📊 近7天統計",
@@ -173,39 +179,42 @@ def build_daily_message(today_rate: float, history_7d: list, history_30d: list) 
 # ── 7. 主流程 ──────────────────────────────────────────
 
 def main():
-    now = datetime.now()
-    print(f"[{now}] 開始執行...")
+    print(f"[{datetime.now(timezone.utc)}] 開始執行...")
 
-    # 取得當前匯率
+    state = load_state()
     current_rate = get_latest_rate()
     print(f"當前匯率：1 CNY = {current_rate} TWD")
 
-    # 拉取7天和30天歷史
     history_7d = fetch_history(7)
     history_30d = fetch_history(30)
 
-    # ── 每日日報（台灣時間 09:00）──
+    # ── 每日日報 ──
     if is_daily_report_time():
-        print("發送每日日報...")
-        msg = build_daily_message(current_rate, history_7d, history_30d)
-        send_telegram(msg)
+        if not already_sent_daily(state):
+            print("發送每日日報...")
+            msg = build_daily_message(current_rate, history_7d, history_30d)
+            send_telegram(msg)
+            state = record_daily(state)
+        else:
+            print("今天日報已發過，跳過")
 
-    # ── 即時警報（7天低點）──
+    # ── 即時警報 ──
     rates_7d = [h["rate"] for h in history_7d]
     if rates_7d:
         min_7d = min(rates_7d)
         print(f"7天最低：{min_7d} TWD")
         if current_rate < min_7d:
-            if can_send_alert(cooldown_minutes=60):
+            if can_send_alert(state):
                 print("🚨 創7天新低！發送警報...")
                 msg = build_alert_message(current_rate, min_7d)
                 send_telegram(msg)
-                record_alert()
+                state = record_alert(state)
             else:
-                print("警報冷卻中，跳過（避免重複通知）")
+                print("警報冷卻中，跳過")
         else:
             print("未創新低，不發警報")
 
+    save_state(state)
     print("完成！")
 
 
