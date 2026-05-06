@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: '*/10 * * * *'  # 每10分鐘檢查一次
   workflow_dispatch:
+    inputs:
+      force_daily:
+        description: '強制發送每日日報（忽略時間限制）'
+        type: boolean
+        default: false
+      test_notify:
+        description: '發送 Telegram 測試通知'
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -33,7 +42,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python rate_agent.py
 
-      - name: 美股下跌監控
+      - name: 大盤即時監控
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -43,7 +52,25 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FORCE_DAILY: ${{ inputs.force_daily }}
         run: python daily_report.py
+
+      - name: Telegram 測試通知
+        if: ${{ inputs.test_notify == true }}
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          import os, requests
+          from datetime import datetime, timezone, timedelta
+          now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y/%m/%d %H:%M')
+          token = os.environ['TELEGRAM_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          text = f'✅ 系統測試通知\n{now}\n\n監控系統運作正常 🟢'
+          requests.post(f'https://api.telegram.org/bot{token}/sendMessage', json={'chat_id': chat_id, 'text': text}, timeout=10)
+          print('測試通知發送完成')
+          "
 
       - name: 儲存狀態紀錄
         uses: actions/cache/save@v4

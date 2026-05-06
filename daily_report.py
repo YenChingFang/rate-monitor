@@ -145,14 +145,17 @@ def build_message(
 # ── 主流程 ─────────────────────────────────────────────
 
 def main():
-    print(f"[{datetime.now(timezone.utc)}] 日報檢查...")
+    import os
+    force = os.getenv("FORCE_DAILY", "").lower() in ("true", "1")
 
-    if not is_daily_report_time():
+    print(f"[{datetime.now(timezone.utc)}] 日報檢查{'（強制模式）' if force else ''}...")
+
+    if not force and not is_daily_report_time():
         print("非日報時間，跳過")
         return
 
     state = load_state()
-    if already_sent_daily(state):
+    if not force and already_sent_daily(state):
         print("今天日報已發過，跳過")
         return
 
