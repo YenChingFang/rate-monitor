@@ -167,6 +167,29 @@ def handle_price(args: list) -> str:
         return f"❌ {e}"
 
 
+def handle_start() -> str:
+    return (
+        "👋 歡迎使用市場監控 Bot！\n"
+        "\n"
+        "這個 Bot 幫你追蹤匯率與股市，在最佳時機提醒你。\n"
+        "\n"
+        "🔔 自動通知功能\n"
+        "  • 每天早上 9 點發送市場日報\n"
+        "    （美股、台股、美金、人民幣匯率）\n"
+        "  • S&P 500 / NASDAQ 近1小時急跌 → 即時警報\n"
+        "  • 台股大盤近1小時急跌 → 即時警報\n"
+        "  • 人民幣匯率創7天新低 → 即時警報\n"
+        "\n"
+        "🤖 互動查詢功能\n"
+        "  /price 0050   查詢台股即時股價\n"
+        "  /price TQQQ   查詢美股即時股價\n"
+        "  /rate         查詢人民幣對新台幣\n"
+        "  /rate USD     查詢美金對新台幣\n"
+        "\n"
+        "輸入 /help 查看完整指令說明 📖"
+    )
+
+
 def handle_help() -> str:
     return (
         "📖 指令說明\n"
@@ -206,7 +229,9 @@ def process_message(chat_id: int, text: str):
             reply = handle_rate(args)
         elif command == "/price":
             reply = handle_price(args)
-        elif command in ("/help", "/start"):
+        elif command == "/start":
+            reply = handle_start()
+        elif command == "/help":
             reply = handle_help()
         else:
             reply = "❓ 不認識這個指令，請輸入 /help 查看可用指令"
