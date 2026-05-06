@@ -53,7 +53,10 @@ def build_alert(ticker: str, config: dict, info: dict) -> str:
 
 
 def main():
-    print(f"[{datetime.now(timezone.utc)}] 大盤監控開始...")
+    import os
+    test_mode = os.getenv("TEST_ALERTS", "").lower() in ("true", "1")
+
+    print(f"[{datetime.now(timezone.utc)}] 大盤監控開始{'（測試模式）' if test_mode else ''}...")
 
     state = load_state()
 
@@ -61,20 +64,30 @@ def main():
         print(f"檢查 {config['name']}...")
         alert_key = f"index_{ticker}_last_alert_time"
 
-        if not can_send_alert(state, alert_key, COOLDOWN_MINUTES):
+        if not test_mode and not can_send_alert(state, alert_key, COOLDOWN_MINUTES):
             print(f"[{ticker}] 警報冷卻中，跳過")
             continue
 
         info = get_1h_change(ticker)
         if not info:
-            continue
+            if test_mode:
+                # 市場收盤時用模擬資料展示格式
+                info = {"current": 0.0, "price_1h_ago": 0.0, "change_pct": 0.0}
+                print(f"[{ticker}] 市場收盤，使用模擬資料")
+            else:
+                continue
 
         print(f"[{ticker}] 現值: {info['current']}, 近1小時跌幅: {info['change_pct']}%")
 
-        if info["change_pct"] <= -config["threshold"]:
-            print(f"[{ticker}] 跌幅超過閾值，發送警報！")
-            send_telegram(build_alert(ticker, config, info))
-            state = record_alert(state, alert_key)
+        should_alert = test_mode or info["change_pct"] <= -config["threshold"]
+        if should_alert:
+            label = "（測試）" if test_mode else ""
+            msg = build_alert(ticker, config, info)
+            if test_mode:
+                msg = msg.replace("⚠️ 大盤急跌，留意進場時機", f"🔔 這是測試通知，實際觸發條件：近1小時跌幅 ≥ {config['threshold']}%")
+            send_telegram(msg)
+            if not test_mode:
+                state = record_alert(state, alert_key)
         else:
             print(f"[{ticker}] 跌幅未達閾值，不通知")
 

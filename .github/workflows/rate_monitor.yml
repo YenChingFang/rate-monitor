@@ -13,6 +13,10 @@ on:
         description: '發送 Telegram 測試通知'
         type: boolean
         default: false
+      test_alerts:
+        description: '試跑大盤下跌通知（用真實價格，略過閾值）'
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -46,6 +50,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TEST_ALERTS: ${{ inputs.test_alerts }}
         run: python stock_agent.py
 
       - name: 每日市場日報
