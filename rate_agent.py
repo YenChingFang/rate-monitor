@@ -1,7 +1,7 @@
 """
 人民幣/台幣匯率監控 Agent
-- 每5分鐘檢查一次（由 GitHub Actions 觸發）
-- 每天早上9點發日報（UTC 01:xx 小時內第一次執行）
+- 每10分鐘檢查一次（由 GitHub Actions 觸發）
+- 每天早上9點發日報，含當日美股漲跌幅（UTC 01:xx 小時內第一次執行）
 - 7天內創低點時立即發警報（每小時最多通知一次）
 """
 
@@ -11,11 +11,18 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
+import yfinance as yf
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-ALERT_COOLDOWN_FILE = Path("last_alert.json")  # 記錄上次警報時間與今日日報狀態
+ALERT_COOLDOWN_FILE = Path("last_alert.json")
+
+STOCK_WATCHLIST = {
+    "VT":   {"threshold": 5.0},
+    "VTI":  {"threshold": 5.0},
+    "TQQQ": {"threshold": 10.0},
+}
 
 
 # ── 1. 取得當前匯率 ────────────────────────────────────
@@ -65,7 +72,28 @@ def fetch_history(days: int) -> list:
     return rates
 
 
-# ── 3. 狀態管理（警報冷卻 + 日報紀錄）────────────────
+# ── 3. 取得美股當日漲跌幅 ──────────────────────────────
+
+def get_all_stocks() -> dict:
+    results = {}
+    for ticker in STOCK_WATCHLIST:
+        try:
+            t = yf.Ticker(ticker)
+            info = t.fast_info
+            current = round(info.last_price, 2)
+            prev_close = round(info.previous_close, 2)
+            change_pct = round((current - prev_close) / prev_close * 100, 2)
+            results[ticker] = {
+                "current": current,
+                "prev_close": prev_close,
+                "change_pct": change_pct,
+            }
+        except Exception as e:
+            print(f"[{ticker}] 取得股價失敗: {e}")
+    return results
+
+
+# ── 4. 狀態管理（警報冷卻 + 日報紀錄）────────────────
 
 def load_state() -> dict:
     if ALERT_COOLDOWN_FILE.exists():
@@ -82,7 +110,6 @@ def can_send_alert(state: dict, cooldown_minutes: int = 60) -> bool:
     return (datetime.now(timezone.utc) - last).total_seconds() > cooldown_minutes * 60
 
 def already_sent_daily(state: dict) -> bool:
-    """今天（UTC 日期）是否已發過日報"""
     today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return state.get("last_daily_date") == today_utc
 
@@ -95,14 +122,14 @@ def record_daily(state: dict) -> dict:
     return state
 
 
-# ── 4. 判斷是否為每天日報時間 ──────────────────────────
+# ── 5. 判斷是否為每天日報時間 ──────────────────────────
 
 def is_daily_report_time() -> bool:
     """台灣時間 09:00 = UTC 01:xx，整個小時內都算"""
     return datetime.now(timezone.utc).hour == 1
 
 
-# ── 5. 發送 Telegram ───────────────────────────────────
+# ── 6. 發送 Telegram ───────────────────────────────────
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -110,7 +137,7 @@ def send_telegram(text: str):
     print("Telegram 訊息發送成功")
 
 
-# ── 6. 組裝訊息 ────────────────────────────────────────
+# ── 7. 組裝訊息 ────────────────────────────────────────
 
 def build_alert_message(today_rate: float, min_7d: float) -> str:
     now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M")
@@ -127,7 +154,7 @@ def build_alert_message(today_rate: float, min_7d: float) -> str:
     ])
 
 
-def build_daily_message(today_rate: float, history_7d: list, history_30d: list) -> str:
+def build_daily_message(today_rate: float, history_7d: list, history_30d: list, stocks: dict) -> str:
     today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d")
 
     def stats(history):
@@ -173,10 +200,19 @@ def build_daily_message(today_rate: float, history_7d: list, history_30d: list) 
             f"  平均：{s30['avg']} TWD",
         ]
 
+    if stocks:
+        lines += ["", "📈 美股今日表現"]
+        for ticker, data in stocks.items():
+            threshold = STOCK_WATCHLIST[ticker]["threshold"]
+            pct = data["change_pct"]
+            emoji = "📉" if pct < 0 else "🟢"
+            alert = f"  ⚠️ 跌幅 >{threshold}%，已觸發通知" if pct <= -threshold else ""
+            lines.append(f"  {ticker:<5} ${data['current']}  {pct:+.2f}% {emoji}{alert}")
+
     return "\n".join(lines)
 
 
-# ── 7. 主流程 ──────────────────────────────────────────
+# ── 8. 主流程 ──────────────────────────────────────────
 
 def main():
     print(f"[{datetime.now(timezone.utc)}] 開始執行...")
@@ -192,7 +228,8 @@ def main():
     if is_daily_report_time():
         if not already_sent_daily(state):
             print("發送每日日報...")
-            msg = build_daily_message(current_rate, history_7d, history_30d)
+            stocks = get_all_stocks()
+            msg = build_daily_message(current_rate, history_7d, history_30d, stocks)
             send_telegram(msg)
             state = record_daily(state)
         else:
