@@ -1,13 +1,17 @@
 """
-人民幣匯率 Telegram Bot - Webhook 伺服器
+市場監控 Telegram Bot - Webhook 伺服器
 支援指令：
-  /rate           → 查詢 CNY 對 TWD
-  /rate USD       → 查詢 USD 對 TWD
-  /rate CNY/USD   → 查詢 CNY 對 USD（斜線分隔）
-  /help           → 查看所有指令
+  /rate               → 查詢 CNY 對 TWD
+  /rate USD           → 查詢 USD 對 TWD
+  /rate CNY/USD       → 查詢任意幣別對
+  /price 0050         → 查詢台股即時股價（純數字自動補 .TW）
+  /price TQQQ         → 查詢美股即時股價
+  /help               → 查看所有指令
 """
 
 import os
+
+import yfinance as yf
 from flask import Flask, request
 import requests
 
@@ -15,6 +19,19 @@ app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+KNOWN_NAMES = {
+    "0050.TW": "元大台灣50",
+    "2330.TW": "台積電",
+    "^TWII":   "加權指數（TAIEX）",
+    "^GSPC":   "S&P 500",
+    "^IXIC":   "NASDAQ Composite",
+    "VT":      "Vanguard Total World",
+    "VTI":     "Vanguard Total Market",
+    "TQQQ":    "ProShares UltraPro QQQ",
+    "QQQ":     "Invesco QQQ",
+    "SPY":     "SPDR S&P 500 ETF",
+}
 
 
 # ── 匯率查詢 ───────────────────────────────────────────
@@ -49,8 +66,40 @@ def get_currency_name(code: str) -> str:
     return CURRENCY_NAMES.get(code.upper(), code.upper())
 
 def normalize(code: str) -> str:
-    """NTD 統一轉成 TWD"""
     return "TWD" if code.upper() == "NTD" else code.upper()
+
+
+# ── 股價查詢 ───────────────────────────────────────────
+
+def parse_ticker(raw: str) -> str:
+    """純數字視為台股，補 .TW；其他直接大寫"""
+    raw = raw.strip()
+    if raw.isdigit():
+        return f"{raw}.TW"
+    return raw.upper()
+
+
+def get_stock_price(ticker: str) -> dict:
+    t = yf.Ticker(ticker)
+    info = t.fast_info
+    current = info.last_price
+    prev_close = info.previous_close
+    if current is None or prev_close is None:
+        raise Exception(f"查不到 {ticker} 的股價，請確認代碼是否正確")
+    change = round(current - prev_close, 2)
+    change_pct = round((current - prev_close) / prev_close * 100, 2)
+    currency = getattr(info, "currency", "USD")
+    day_high = getattr(info, "day_high", None)
+    day_low = getattr(info, "day_low", None)
+    return {
+        "current": round(current, 2),
+        "prev_close": round(prev_close, 2),
+        "change": change,
+        "change_pct": change_pct,
+        "currency": currency,
+        "day_high": round(day_high, 2) if day_high else None,
+        "day_low": round(day_low, 2) if day_low else None,
+    }
 
 
 # ── 指令處理 ───────────────────────────────────────────
@@ -58,40 +107,62 @@ def normalize(code: str) -> str:
 def handle_rate(args: list) -> str:
     try:
         if len(args) == 0:
-            # /rate → CNY 對 TWD
             rate = get_rate("CNY", "TWD")
             return (
-                f"💱 即時匯率\n"
-                f"\n"
-                f"1 人民幣 (CNY) = {rate} 新台幣 (TWD)\n"
-                f"\n"
+                f"💱 即時匯率\n\n"
+                f"1 人民幣 (CNY) = {rate} 新台幣 (TWD)\n\n"
                 f"💡 /rate USD     查詢美元對台幣\n"
                 f"💡 /rate CNY/USD 查詢人民幣對美元"
             )
-
         raw = args[0]
-
         if "/" in raw:
-            # /rate CNY/USD
             parts = raw.split("/")
             if len(parts) != 2 or not parts[0] or not parts[1]:
                 return "❌ 格式錯誤，範例：/rate CNY/USD"
             from_c = normalize(parts[0])
             to_c = normalize(parts[1])
         else:
-            # /rate USD → USD 對 TWD
             from_c = normalize(raw)
             to_c = "TWD"
-
         rate = get_rate(from_c, to_c)
         from_name = get_currency_name(from_c)
         to_name = get_currency_name(to_c)
-        return (
-            f"💱 即時匯率\n"
-            f"\n"
-            f"1 {from_name} ({from_c}) = {rate} {to_name} ({to_c})"
-        )
+        return f"💱 即時匯率\n\n1 {from_name} ({from_c}) = {rate} {to_name} ({to_c})"
+    except Exception as e:
+        return f"❌ {e}"
 
+
+def handle_price(args: list) -> str:
+    if not args:
+        return (
+            "❌ 請輸入股票代碼\n\n"
+            "範例：\n"
+            "  /price 0050    台股（純數字自動補 .TW）\n"
+            "  /price 2330\n"
+            "  /price TQQQ   美股\n"
+            "  /price SPY"
+        )
+    try:
+        ticker = parse_ticker(args[0])
+        name = KNOWN_NAMES.get(ticker, "")
+        data = get_stock_price(ticker)
+
+        prefix = "NT$" if data["currency"] == "TWD" else "$"
+        emoji = "🟢" if data["change_pct"] >= 0 else "📉"
+        sign = "+" if data["change"] >= 0 else ""
+        display_ticker = ticker.replace(".TW", "") if ticker.endswith(".TW") else ticker
+
+        lines = [
+            f"📊 {display_ticker}" + (f"  {name}" if name else ""),
+            "",
+            f"現價：{prefix}{data['current']:,}",
+            f"今日漲跌：{sign}{data['change']} ({sign}{data['change_pct']}%) {emoji}",
+            f"昨日收盤：{prefix}{data['prev_close']:,}",
+        ]
+        if data["day_high"] and data["day_low"]:
+            lines.append(f"今日區間：{prefix}{data['day_low']:,} – {prefix}{data['day_high']:,}")
+
+        return "\n".join(lines)
     except Exception as e:
         return f"❌ {e}"
 
@@ -100,25 +171,25 @@ def handle_help() -> str:
     return (
         "📖 指令說明\n"
         "\n"
+        "/price [代碼]\n"
+        "  查詢即時股價\n"
+        "  台股（純數字自動補 .TW）：\n"
+        "    /price 0050   /price 2330\n"
+        "  美股：\n"
+        "    /price TQQQ   /price SPY\n"
+        "\n"
         "/rate\n"
         "  查詢人民幣對新台幣匯率\n"
         "\n"
         "/rate [幣別]\n"
-        "  查詢指定幣別對新台幣匯率\n"
-        "  例：/rate USD\n"
-        "  例：/rate JPY\n"
+        "  查詢指定幣別對新台幣\n"
+        "  例：/rate USD   /rate JPY\n"
         "\n"
         "/rate [幣別A]/[幣別B]\n"
-        "  查詢任意兩種幣別匯率\n"
-        "  例：/rate CNY/USD\n"
-        "  例：/rate USD/JPY\n"
+        "  查詢任意兩種幣別\n"
+        "  例：/rate CNY/USD   /rate USD/JPY\n"
         "\n"
-        "常用幣別代碼：\n"
-        "  CNY 人民幣   USD 美元\n"
-        "  JPY 日圓     EUR 歐元\n"
-        "  HKD 港幣     KRW 韓元\n"
-        "  GBP 英鎊     SGD 新加坡幣\n"
-        "  AUD 澳幣     THB 泰銖"
+        "常用幣別：CNY USD JPY EUR HKD SGD AUD GBP"
     )
 
 
@@ -133,6 +204,8 @@ def process_message(chat_id: int, text: str):
 
         if command == "/rate":
             reply = handle_rate(args)
+        elif command == "/price":
+            reply = handle_price(args)
         elif command in ("/help", "/start"):
             reply = handle_help()
         else:
