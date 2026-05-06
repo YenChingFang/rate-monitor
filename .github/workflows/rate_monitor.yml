@@ -1,4 +1,4 @@
-name: 匯率與美股監控
+name: 市場監控
 
 on:
   schedule:
@@ -9,14 +9,14 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  check-rate:
+  monitor:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout 程式碼
         uses: actions/checkout@v4
 
-      - name: 還原冷卻時間紀錄
+      - name: 還原狀態紀錄
         uses: actions/cache@v4
         with:
           path: last_alert.json
@@ -27,19 +27,25 @@ jobs:
       - name: 安裝套件
         run: pip install requests yfinance
 
-      - name: 執行匯率監控
+      - name: 人民幣匯率監控
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python rate_agent.py
 
-      - name: 執行美股監控
+      - name: 美股下跌監控
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python stock_agent.py
 
-      - name: 儲存冷卻時間紀錄
+      - name: 每日市場日報
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python daily_report.py
+
+      - name: 儲存狀態紀錄
         uses: actions/cache/save@v4
         if: always()
         with:

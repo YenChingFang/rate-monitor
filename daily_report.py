@@ -1,0 +1,192 @@
+"""每日市場日報 — 台灣時間早上9點發送，包含美股、台股、美金、人民幣"""
+
+from datetime import datetime, timezone, timedelta
+
+import requests
+import yfinance as yf
+
+from utils import (
+    already_sent_daily, is_daily_report_time, load_state,
+    record_daily, save_state, send_telegram,
+)
+
+US_STOCKS = {
+    "VT":   {"threshold": 5.0},
+    "VTI":  {"threshold": 5.0},
+    "TQQQ": {"threshold": 10.0},
+}
+
+TW_STOCKS = {
+    "0050.TW": {"name": "元大台灣50"},
+    "2330.TW": {"name": "台積電"},
+}
+
+
+# ── 資料取得 ───────────────────────────────────────────
+
+def get_exchange_rate(base: str, target: str, date_str: str = "latest") -> float:
+    if date_str == "latest":
+        urls = [
+            f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{base}.json",
+            f"https://latest.currency-api.pages.dev/v1/currencies/{base}.json",
+        ]
+    else:
+        urls = [
+            f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date_str}/v1/currencies/{base}.json",
+            f"https://{date_str}.currency-api.pages.dev/v1/currencies/{base}.json",
+        ]
+    for url in urls:
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                return round(resp.json()[base][target], 4)
+        except Exception:
+            continue
+    raise Exception(f"無法取得 {base.upper()}/{target.upper()} ({date_str}) 匯率")
+
+
+def fetch_cny_history(days: int) -> list:
+    today = datetime.now(timezone.utc)
+    rates = []
+    for i in range(days, 0, -1):
+        date_str = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            rate = get_exchange_rate("cny", "twd", date_str)
+            rates.append({"date": date_str, "rate": rate})
+        except Exception:
+            pass
+    return rates
+
+
+def fetch_stock(ticker: str) -> dict | None:
+    try:
+        t = yf.Ticker(ticker)
+        info = t.fast_info
+        current = round(info.last_price, 2)
+        prev_close = round(info.previous_close, 2)
+        change_pct = round((current - prev_close) / prev_close * 100, 2)
+        return {"current": current, "prev_close": prev_close, "change_pct": change_pct}
+    except Exception as e:
+        print(f"[{ticker}] 取得股價失敗: {e}")
+        return None
+
+
+# ── 訊息組裝 ───────────────────────────────────────────
+
+def _pct_str(pct: float) -> str:
+    emoji = "📉" if pct < 0 else "🟢"
+    return f"{pct:+.2f}% {emoji}"
+
+
+def build_message(
+    us_stocks: dict,
+    tw_stocks: dict,
+    usd_rate: float,
+    usd_prev: float,
+    cny_rate: float,
+    cny_7d: list,
+    cny_30d: list,
+) -> str:
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d")
+
+    def stats(history):
+        rates = [h["rate"] for h in history]
+        if not rates:
+            return None
+        return {"min": min(rates), "max": max(rates), "avg": round(sum(rates) / len(rates), 4)}
+
+    lines = [f"📊 每日市場日報 {today}", ""]
+
+    # 美股
+    if us_stocks:
+        lines.append("🇺🇸 美股")
+        for ticker, data in us_stocks.items():
+            threshold = US_STOCKS[ticker]["threshold"]
+            pct = data["change_pct"]
+            alert = f"  ⚠️ 跌>{threshold}%，已觸發通知" if pct <= -threshold else ""
+            lines.append(f"  {ticker:<5} ${data['current']}  {_pct_str(pct)}{alert}")
+
+    # 台股
+    if tw_stocks:
+        lines += ["", "🇹🇼 台股"]
+        for ticker, data in tw_stocks.items():
+            short = ticker.replace(".TW", "")
+            lines.append(f"  {short} {data['name']}  NT${data['current']}  {_pct_str(data['change_pct'])}")
+
+    # 美金匯率
+    usd_change_pct = round((usd_rate - usd_prev) / usd_prev * 100, 2)
+    lines += [
+        "",
+        "💵 美金匯率",
+        f"  1 USD = {usd_rate} TWD  {_pct_str(usd_change_pct)}（昨日 {usd_prev}）",
+    ]
+
+    # 人民幣匯率
+    s7 = stats(cny_7d)
+    s30 = stats(cny_30d)
+    cny_trend = "📉" if s7 and cny_rate < s7["avg"] else "📈"
+    lines += ["", "🀄 人民幣匯率", f"  1 CNY = {cny_rate} TWD {cny_trend}"]
+
+    if s7:
+        rate_range = s7["max"] - s7["min"]
+        if rate_range > 0:
+            position = int((cny_rate - s7["min"]) / rate_range * 100)
+            bar = "🟩" * (position // 20) + "⬜" * (5 - position // 20)
+            lines.append(f"  便宜程度(7天)：{bar}（{100 - position}% 划算）")
+        lines.append(f"  近7天：最低 {s7['min']} ← 最划算  最高 {s7['max']}  平均 {s7['avg']}")
+
+    if s30:
+        lines.append(f"  近30天：最低 {s30['min']}  最高 {s30['max']}  平均 {s30['avg']}")
+
+    return "\n".join(lines)
+
+
+# ── 主流程 ─────────────────────────────────────────────
+
+def main():
+    print(f"[{datetime.now(timezone.utc)}] 日報檢查...")
+
+    if not is_daily_report_time():
+        print("非日報時間，跳過")
+        return
+
+    state = load_state()
+    if already_sent_daily(state):
+        print("今天日報已發過，跳過")
+        return
+
+    print("開始收集市場資料...")
+
+    us_stocks = {}
+    for ticker in US_STOCKS:
+        info = fetch_stock(ticker)
+        if info:
+            us_stocks[ticker] = info
+
+    tw_stocks = {}
+    for ticker, config in TW_STOCKS.items():
+        info = fetch_stock(ticker)
+        if info:
+            tw_stocks[ticker] = {**info, "name": config["name"]}
+
+    usd_rate = get_exchange_rate("usd", "twd")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        usd_prev = get_exchange_rate("usd", "twd", yesterday)
+    except Exception:
+        usd_prev = usd_rate
+
+    cny_rate = get_exchange_rate("cny", "twd")
+    cny_7d = fetch_cny_history(7)
+    cny_30d = fetch_cny_history(30)
+
+    msg = build_message(us_stocks, tw_stocks, usd_rate, usd_prev, cny_rate, cny_7d, cny_30d)
+    send_telegram(msg)
+
+    state = record_daily(state)
+    save_state(state)
+    print("日報發送完成！")
+
+
+if __name__ == "__main__":
+    main()

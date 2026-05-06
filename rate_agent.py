@@ -1,251 +1,81 @@
-"""
-人民幣/台幣匯率監控 Agent
-- 每10分鐘檢查一次（由 GitHub Actions 觸發）
-- 每天早上9點發日報，含當日美股漲跌幅（UTC 01:xx 小時內第一次執行）
-- 7天內創低點時立即發警報（每小時最多通知一次）
-"""
+"""人民幣/台幣匯率即時監控 — 7天創低時發 Telegram 警報"""
 
-import json
-import os
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 import requests
-import yfinance as yf
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+from utils import can_send_alert, load_state, record_alert, save_state, send_telegram
 
-ALERT_COOLDOWN_FILE = Path("last_alert.json")
-
-STOCK_WATCHLIST = {
-    "VT":   {"threshold": 5.0},
-    "VTI":  {"threshold": 5.0},
-    "TQQQ": {"threshold": 10.0},
-}
+CNY_ALERT_KEY = "cny_last_alert_time"
 
 
-# ── 1. 取得當前匯率 ────────────────────────────────────
-
-def get_latest_rate() -> float:
-    urls = [
-        "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/cny.json",
-        "https://latest.currency-api.pages.dev/v1/currencies/cny.json",
-    ]
+def get_rate(base: str, target: str, date_str: str = "latest") -> float:
+    if date_str == "latest":
+        urls = [
+            f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{base}.json",
+            f"https://latest.currency-api.pages.dev/v1/currencies/{base}.json",
+        ]
+    else:
+        urls = [
+            f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date_str}/v1/currencies/{base}.json",
+            f"https://{date_str}.currency-api.pages.dev/v1/currencies/{base}.json",
+        ]
     for url in urls:
         try:
             resp = requests.get(url, timeout=10)
             if resp.status_code == 200:
-                return round(resp.json()["cny"]["twd"], 4)
+                return round(resp.json()[base][target], 4)
         except Exception:
             continue
-    raise Exception("無法取得最新匯率")
+    raise Exception(f"無法取得 {base.upper()}/{target.upper()} 匯率")
 
-
-def get_rate_on_date(date_str: str) -> float:
-    urls = [
-        f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date_str}/v1/currencies/cny.json",
-        f"https://{date_str}.currency-api.pages.dev/v1/currencies/cny.json",
-    ]
-    for url in urls:
-        try:
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                return round(resp.json()["cny"]["twd"], 4)
-        except Exception:
-            continue
-    raise Exception(f"無法取得 {date_str} 匯率")
-
-
-# ── 2. 拉取N天歷史匯率 ────────────────────────────────
 
 def fetch_history(days: int) -> list:
-    rates = []
     today = datetime.now(timezone.utc)
+    rates = []
     for i in range(days, 0, -1):
         date_str = (today - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
-            rate = get_rate_on_date(date_str)
+            rate = get_rate("cny", "twd", date_str)
             rates.append({"date": date_str, "rate": rate})
         except Exception:
             pass
     return rates
 
 
-# ── 3. 取得美股當日漲跌幅 ──────────────────────────────
-
-def get_all_stocks() -> dict:
-    results = {}
-    for ticker in STOCK_WATCHLIST:
-        try:
-            t = yf.Ticker(ticker)
-            info = t.fast_info
-            current = round(info.last_price, 2)
-            prev_close = round(info.previous_close, 2)
-            change_pct = round((current - prev_close) / prev_close * 100, 2)
-            results[ticker] = {
-                "current": current,
-                "prev_close": prev_close,
-                "change_pct": change_pct,
-            }
-        except Exception as e:
-            print(f"[{ticker}] 取得股價失敗: {e}")
-    return results
-
-
-# ── 4. 狀態管理（警報冷卻 + 日報紀錄）────────────────
-
-def load_state() -> dict:
-    if ALERT_COOLDOWN_FILE.exists():
-        return json.loads(ALERT_COOLDOWN_FILE.read_text())
-    return {}
-
-def save_state(data: dict):
-    ALERT_COOLDOWN_FILE.write_text(json.dumps(data))
-
-def can_send_alert(state: dict, cooldown_minutes: int = 60) -> bool:
-    if "last_alert_time" not in state:
-        return True
-    last = datetime.fromisoformat(state["last_alert_time"])
-    return (datetime.now(timezone.utc) - last).total_seconds() > cooldown_minutes * 60
-
-def already_sent_daily(state: dict) -> bool:
-    today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return state.get("last_daily_date") == today_utc
-
-def record_alert(state: dict) -> dict:
-    state["last_alert_time"] = datetime.now(timezone.utc).isoformat()
-    return state
-
-def record_daily(state: dict) -> dict:
-    state["last_daily_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return state
-
-
-# ── 5. 判斷是否為每天日報時間 ──────────────────────────
-
-def is_daily_report_time() -> bool:
-    """台灣時間 09:00 = UTC 01:xx，整個小時內都算"""
-    return datetime.now(timezone.utc).hour == 1
-
-
-# ── 6. 發送 Telegram ───────────────────────────────────
-
-def send_telegram(text: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=10).raise_for_status()
-    print("Telegram 訊息發送成功")
-
-
-# ── 7. 組裝訊息 ────────────────────────────────────────
-
-def build_alert_message(today_rate: float, min_7d: float) -> str:
+def build_alert_message(current: float, min_7d: float) -> str:
     now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M")
-    drop = round(min_7d - today_rate, 4)
+    drop = round(min_7d - current, 4)
     return "\n".join([
         f"🚨 人民幣匯率警報 {now}",
-        f"",
-        f"現在匯率：1 CNY = {today_rate} TWD",
+        "",
+        f"現在匯率：1 CNY = {current} TWD",
         f"7天最低：{min_7d} TWD",
         f"比近7天最低還低 {drop} TWD！",
-        f"",
-        f"💰 現在換人民幣最划算，",
-        f"趕快去淘寶下單吧 🛒",
+        "",
+        "💰 現在換人民幣最划算，",
+        "趕快去淘寶下單吧 🛒",
     ])
 
 
-def build_daily_message(today_rate: float, history_7d: list, history_30d: list, stocks: dict) -> str:
-    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d")
-
-    def stats(history):
-        rates = [h["rate"] for h in history]
-        if not rates:
-            return None
-        return {
-            "min": min(rates),
-            "max": max(rates),
-            "avg": round(sum(rates) / len(rates), 4),
-        }
-
-    s7 = stats(history_7d)
-    s30 = stats(history_30d)
-    trend = "📉" if s7 and today_rate < s7["avg"] else "📈"
-
-    lines = [
-        f"💱 人民幣匯率日報 {today}",
-        f"",
-        f"今日匯率：1 CNY = {today_rate} TWD {trend}",
-    ]
-
-    if s7:
-        rate_range = s7["max"] - s7["min"]
-        if rate_range > 0:
-            position = int((today_rate - s7["min"]) / rate_range * 100)
-            bar = "🟩" * (position // 20) + "⬜" * (5 - position // 20)
-            lines.append(f"便宜程度(7天)：{bar}（{100 - position}% 划算）")
-        lines += [
-            f"",
-            f"📊 近7天統計",
-            f"  最低：{s7['min']} TWD ← 最划算",
-            f"  最高：{s7['max']} TWD",
-            f"  平均：{s7['avg']} TWD",
-        ]
-
-    if s30:
-        lines += [
-            f"",
-            f"📊 近30天統計",
-            f"  最低：{s30['min']} TWD",
-            f"  最高：{s30['max']} TWD",
-            f"  平均：{s30['avg']} TWD",
-        ]
-
-    if stocks:
-        lines += ["", "📈 美股今日表現"]
-        for ticker, data in stocks.items():
-            threshold = STOCK_WATCHLIST[ticker]["threshold"]
-            pct = data["change_pct"]
-            emoji = "📉" if pct < 0 else "🟢"
-            alert = f"  ⚠️ 跌幅 >{threshold}%，已觸發通知" if pct <= -threshold else ""
-            lines.append(f"  {ticker:<5} ${data['current']}  {pct:+.2f}% {emoji}{alert}")
-
-    return "\n".join(lines)
-
-
-# ── 8. 主流程 ──────────────────────────────────────────
-
 def main():
-    print(f"[{datetime.now(timezone.utc)}] 開始執行...")
+    print(f"[{datetime.now(timezone.utc)}] CNY 監控開始...")
 
     state = load_state()
-    current_rate = get_latest_rate()
-    print(f"當前匯率：1 CNY = {current_rate} TWD")
+    current = get_rate("cny", "twd")
+    print(f"CNY/TWD: {current}")
 
     history_7d = fetch_history(7)
-    history_30d = fetch_history(30)
-
-    # ── 每日日報 ──
-    if is_daily_report_time():
-        if not already_sent_daily(state):
-            print("發送每日日報...")
-            stocks = get_all_stocks()
-            msg = build_daily_message(current_rate, history_7d, history_30d, stocks)
-            send_telegram(msg)
-            state = record_daily(state)
-        else:
-            print("今天日報已發過，跳過")
-
-    # ── 即時警報 ──
     rates_7d = [h["rate"] for h in history_7d]
+
     if rates_7d:
         min_7d = min(rates_7d)
-        print(f"7天最低：{min_7d} TWD")
-        if current_rate < min_7d:
-            if can_send_alert(state):
+        print(f"7天最低：{min_7d}")
+        if current < min_7d:
+            if can_send_alert(state, CNY_ALERT_KEY):
                 print("🚨 創7天新低！發送警報...")
-                msg = build_alert_message(current_rate, min_7d)
-                send_telegram(msg)
-                state = record_alert(state)
+                send_telegram(build_alert_message(current, min_7d))
+                state = record_alert(state, CNY_ALERT_KEY)
             else:
                 print("警報冷卻中，跳過")
         else:
