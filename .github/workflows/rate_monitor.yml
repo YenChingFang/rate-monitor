@@ -1,8 +1,8 @@
-name: 人民幣匯率監控
+name: 匯率與美股監控
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # 每5分鐘檢查一次
+    - cron: '*/10 * * * *'  # 每10分鐘檢查一次
   workflow_dispatch:
 
 env:
@@ -25,13 +25,19 @@ jobs:
             last-alert-
 
       - name: 安裝套件
-        run: pip install requests
+        run: pip install requests yfinance
 
       - name: 執行匯率監控
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python rate_agent.py
+
+      - name: 執行美股監控
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python stock_agent.py
 
       - name: 儲存冷卻時間紀錄
         uses: actions/cache/save@v4
