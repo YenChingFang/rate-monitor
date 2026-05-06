@@ -1,56 +1,80 @@
-# 💱 CNY/TWD Exchange Rate Monitor Bot
+# 📊 Market Monitor Bot
 
-A Telegram bot that monitors CNY to TWD exchange rates, sends daily reports every morning, and alerts you instantly when the rate hits a 7-day low — so you know the best time to shop on Taobao.
+A Telegram bot that monitors exchange rates and global market indices, sends a daily morning report, and alerts you instantly when rates or markets make significant moves.
 
 ---
 
 ## Features
 
-- **Instant Alerts**: Checks every 5 minutes via GitHub Actions; notifies you when the rate drops below the 7-day low
-- **Daily Report**: Sends a morning summary at 09:00 (Taiwan time) with 7-day and 30-day statistics
-- **Interactive Commands**: Query any currency pair on demand via Telegram
-- **Anti-spam**: Alert cooldown of 60 minutes to avoid repeated notifications
-- **Completely Free**: GitHub Actions free tier + Render free tier + no-key exchange rate API
+- **Daily Report** — Every morning at 09:00 (Taiwan time): US stocks, Taiwan stocks, USD/TWD, CNY/TWD with 7-day and 30-day stats
+- **Market Index Alerts** — Notifies you when S&P 500, NASDAQ, or TAIEX drops significantly within an hour
+- **CNY Rate Alert** — Instant alert when CNY/TWD hits a 7-day low (best time to buy CNY)
+- **Interactive Bot** — Query any stock price or currency pair on demand via Telegram commands
+- **Anti-spam** — Per-index 60-minute cooldown; daily report sent only once per day
+- **Completely Free** — GitHub Actions free tier + Render free tier + no-key APIs
 
 ---
 
 ## Notification Examples
 
-**Instant Alert**
-```
-🚨 Exchange Rate Alert 2026/03/31 14:35
-
-Current Rate: 1 CNY = 4.5800 TWD
-7-Day Low: 4.5950 TWD
-0.015 TWD lower than the 7-day low!
-
-💰 Best time to buy CNY — go shop on Taobao! 🛒
-```
-
 **Daily Report**
 ```
-💱 Daily Rate Report 2026/03/31
+📊 每日市場日報 2026/05/07
 
-Today: 1 CNY = 4.6361 TWD 📈
-Value (7-day): 🟩🟩⬜⬜⬜ (38% cheap)
+🇺🇸 美股
+  VT    $152.12  +0.81% 🟢
+  VTI   $356.99  -0.83% 📉
+  TQQQ  $67.39   -4.19% 📉
 
-📊 7-Day Stats
-  Low (best):  4.5800 TWD
-  High:        4.6800 TWD
-  Average:     4.6300 TWD
+🇹🇼 台股
+  0050 元大台灣50  NT$185.5  +1.50% 🟢
+  2330 台積電      NT$935.0  -0.85% 📉
 
-📊 30-Day Stats
-  Low:         4.5500 TWD
-  High:        4.7100 TWD
-  Average:     4.6200 TWD
+💵 美金匯率
+  1 USD = 32.45 TWD 📈
+  便宜程度(7天)：🟩🟩⬜⬜⬜（60% 划算）
+  近7天：最低 32.10 ← 最划算  最高 32.80  平均 32.44
+  近30天：最低 31.90  最高 33.10  平均 32.50
+
+🀄 人民幣匯率
+  1 CNY = 4.43 TWD 📈
+  便宜程度(7天)：🟩🟩⬜⬜⬜（60% 划算）
+  近7天：最低 4.40 ← 最划算  最高 4.45  平均 4.42
+  近30天：最低 4.38  最高 4.48  平均 4.43
+```
+
+**Market Index Alert**
+```
+📉 🇺🇸 美股大盤下跌警報 2026/05/07 22:45
+
+S&P 500
+現值：5,102.45
+1小時前：5,210.20
+近1小時跌幅：-2.07%（閾值 -2%）
+
+⚠️ 大盤急跌，留意進場時機
+```
+
+**CNY Rate Alert**
+```
+🚨 人民幣匯率警報 2026/05/07 14:35
+
+現在匯率：1 CNY = 4.3800 TWD
+7天最低：4.3950 TWD
+比近7天最低還低 0.015 TWD！
+
+💰 現在換人民幣最划算，
+趕快去淘寶下單吧 🛒
 ```
 
 **Bot Commands**
 ```
-/rate              → CNY to TWD (default)
-/rate USD          → USD to TWD
-/rate CNY/USD      → CNY to USD (any pair)
-/help              → Show all commands
+/price 0050     → 台股即時股價（純數字自動補 .TW）
+/price TQQQ     → 美股即時股價
+/rate           → CNY 對 TWD 匯率
+/rate USD       → USD 對 TWD 匯率
+/rate CNY/USD   → 任意幣別對
+/help           → 查看所有指令
 ```
 
 ---
@@ -58,17 +82,31 @@ Value (7-day): 🟩🟩⬜⬜⬜ (38% cheap)
 ## Architecture
 
 ```
-GitHub Actions (every 5 min)
-  └── rate_agent.py
-        ├── Fetch latest rate (fawazahmed0/exchange-api)
-        ├── Compare against 7-day history
-        ├── Send alert if new 7-day low
-        └── Send daily report at 09:00 TWD
+GitHub Actions (every 10 min)
+  ├── rate_agent.py     → CNY/TWD 7-day low alert
+  ├── stock_agent.py    → Market index 1-hour drop alerts
+  └── daily_report.py   → Morning report at 09:00 TWD
 
-Render (always on webhook server)
+Render (always-on webhook server)
   └── bot_server.py (Flask)
-        └── Handle /rate and /help commands
+        ├── /price [ticker]  Real-time stock price
+        ├── /rate [pair]     Exchange rate query
+        └── /help            Command list
+
+Shared
+  └── utils.py          → Telegram sender, state management
 ```
+
+---
+
+## Alert Thresholds
+
+| Monitor | Condition | Cooldown |
+|---|---|---|
+| S&P 500 | 1-hour drop ≥ 2% | 60 min |
+| NASDAQ | 1-hour drop ≥ 2.5% | 60 min |
+| TAIEX | 1-hour drop ≥ 2% | 60 min |
+| CNY/TWD | New 7-day low | 60 min |
 
 ---
 
@@ -77,26 +115,16 @@ Render (always on webhook server)
 ### 1. Create a Telegram Bot
 
 1. Search `@BotFather` on Telegram, send `/newbot`
-2. Follow the prompts to get your **Bot Token**
+2. Follow prompts to get your **Bot Token**
 3. Send any message to your bot, then open:
    ```
    https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
    ```
-4. Find `"chat":{"id": <number>}` — that number is your **Chat ID**
+4. Find `"chat":{"id": <number>}` — that's your **Chat ID**
 
-### 2. GitHub Actions (Daily Report + Alerts)
+### 2. GitHub Actions (Alerts + Daily Report)
 
-**File structure:**
-```
-your-repo/
-├── README.md
-├── rate_agent.py
-└── .github/
-    └── workflows/
-        └── rate_monitor.yml
-```
-
-**Add GitHub Secrets** (Settings → Secrets and variables → Actions):
+Add **GitHub Secrets** (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |---|---|
@@ -105,32 +133,30 @@ your-repo/
 
 ### 3. Render (Bot Commands)
 
-**File structure:**
-```
-your-repo/
-├── bot_server.py
-├── requirements.txt
-└── render.yaml
-```
-
 1. Sign up at [render.com](https://render.com) and connect your GitHub repo
-2. Create a **Web Service**, set start command to:
-   ```
-   gunicorn bot_server:app
-   ```
+2. Create a **Web Service** — `render.yaml` will auto-configure it
 3. Add environment variable: `TELEGRAM_TOKEN` = your Bot Token
-4. Deploy and note your Render URL (e.g. `https://rate-monitor.onrender.com`)
+4. Deploy and note your Render URL (e.g. `https://rate-bot.onrender.com`)
 
-### 4. Register Webhook (once only)
+### 4. Register Webhook + Commands (once only)
 
-After Render deployment completes, run locally:
+After Render deployment completes, run:
 
 ```bash
-pip3 install requests
-TELEGRAM_TOKEN=your_token WEBHOOK_URL=https://your-app.onrender.com python3 set_webhook.py
+TELEGRAM_TOKEN=your_token WEBHOOK_URL=https://your-app.onrender.com python set_webhook.py
 ```
 
-You should see `{"ok": true}` — setup complete!
+This sets the webhook URL and registers slash commands for autocomplete in Telegram.
+
+### 5. Manual Triggers (GitHub Actions)
+
+Go to **Actions → 市場監控 → Run workflow** to access manual options:
+
+| Option | Description |
+|---|---|
+| Force daily report | Send the daily report immediately, ignoring time |
+| Test notification | Send a Telegram ping to confirm the system works |
+| Test alerts | Send sample market drop alerts with real current prices |
 
 ---
 
@@ -138,11 +164,12 @@ You should see `{"ok": true}` — setup complete!
 
 | Item | Detail |
 |---|---|
-| Exchange Rate API | [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-api) — free, no key required |
-| Scheduled Jobs | GitHub Actions (free tier, ~1500 min/month) |
-| Check Frequency | Every 5 minutes (`*/5 * * * *`) |
+| Exchange Rate API | [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-api) — free, no key |
+| Stock Price API | [yfinance](https://github.com/ranaroussi/yfinance) — free, no key |
+| Scheduled Jobs | GitHub Actions (free tier) |
+| Check Frequency | Every 10 minutes |
 | Daily Report Time | 09:00 Taiwan time (UTC+8) |
-| Alert Cooldown | 60 minutes |
+| Alert Cooldown | 60 minutes per index/rate |
 | Bot Server | Render free tier (Flask + Gunicorn) |
 | Notifications | Telegram Bot API |
 
@@ -150,7 +177,7 @@ You should see `{"ok": true}` — setup complete!
 
 ## Notes
 
-- GitHub Actions free tier provides 2,000 min/month; running every 5 minutes uses ~1,500 min/month, staying within the free limit
-- Render free tier sleeps after 15 minutes of inactivity; the bot will wake up automatically when a command is received (first response may take a few seconds)
-- `fawazahmed0/exchange-api` updates rates once per day, so the 5-minute checks will return the same value within the same day — upgrade to a paid real-time API if you need live tick data
-- Exchange rates are for reference only; actual rates may vary by bank or platform
+- GitHub Actions free tier: 2,000 min/month. Running every 10 minutes uses ~1,500 min/month
+- Render free tier sleeps after 15 minutes of inactivity; bot wakes automatically on command (first response may take a few seconds)
+- Exchange rates update once per day; stock prices from yfinance reflect the latest market session
+- Market data is for reference only; actual rates and prices may vary by platform
