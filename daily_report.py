@@ -147,10 +147,11 @@ def build_message(
 def main():
     import os
     force = os.getenv("FORCE_DAILY", "").lower() in ("true", "1")
+    daily_trigger = os.getenv("DAILY_TRIGGER", "").lower() in ("true", "1")
 
-    print(f"[{datetime.now(timezone.utc)}] 日報檢查{'（強制模式）' if force else ''}...")
+    print(f"[{datetime.now(timezone.utc)}] 日報檢查{'（強制模式）' if force else '（專屬 cron）' if daily_trigger else ''}...")
 
-    if not force and not is_daily_report_time():
+    if not force and not daily_trigger and not is_daily_report_time():
         print("非日報時間，跳過")
         return
 
