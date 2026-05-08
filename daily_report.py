@@ -6,7 +6,7 @@ import requests
 import yfinance as yf
 
 from utils import (
-    already_sent_daily, is_daily_report_time, load_state,
+    already_sent_daily, load_state,
     record_daily, save_state, send_telegram,
 )
 
@@ -151,7 +151,7 @@ def main():
 
     print(f"[{datetime.now(timezone.utc)}] 日報檢查{'（強制模式）' if force else '（專屬 cron）' if daily_trigger else ''}...")
 
-    if not force and not daily_trigger and not is_daily_report_time():
+    if not force and not daily_trigger:
         print("非日報時間，跳過")
         return
 
