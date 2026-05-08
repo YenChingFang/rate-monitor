@@ -1,6 +1,6 @@
 # 📊 Market Monitor Bot
 
-A Telegram bot that monitors exchange rates and global market indices, sends a daily morning report, and alerts you instantly when rates or markets make significant moves.
+A Telegram bot that monitors exchange rates and global market indices, sends a daily morning report, and alerts you instantly when markets make significant moves.
 
 ---
 
@@ -8,9 +8,10 @@ A Telegram bot that monitors exchange rates and global market indices, sends a d
 
 - **Daily Report** — Every morning at 09:00 (Taiwan time): US stocks, Taiwan stocks, USD/TWD, CNY/TWD with 7-day and 30-day stats
 - **Market Index Alerts** — Notifies you when S&P 500, NASDAQ, or TAIEX drops significantly within an hour
-- **CNY Rate Alert** — Instant alert when CNY/TWD hits a 7-day low (best time to buy CNY)
+- **Individual Stock Alerts** — Notifies you when TSMC, 0050, VTI, VT, or TQQQ drops beyond its threshold within an hour
+- **Smart Scheduling** — GitHub Actions only run during Taiwan or US market hours, minimizing unnecessary usage
 - **Interactive Bot** — Query any stock price or currency pair on demand via Telegram commands
-- **Anti-spam** — Per-index 60-minute cooldown; daily report sent only once per day
+- **Anti-spam** — Per-ticker 60-minute cooldown; daily report sent only once per day
 - **Completely Free** — GitHub Actions free tier + Render free tier + no-key APIs
 
 ---
@@ -55,16 +56,16 @@ S&P 500
 ⚠️ 大盤急跌，留意進場時機
 ```
 
-**CNY Rate Alert**
+**Individual Stock Alert**
 ```
-🚨 人民幣匯率警報 2026/05/07 14:35
+📉 🇹🇼 個股下跌警報 2026/05/07 11:20
 
-現在匯率：1 CNY = 4.3800 TWD
-7天最低：4.3950 TWD
-比近7天最低還低 0.015 TWD！
+台積電（2330.TW）
+現值：910.00
+1小時前：960.00
+近1小時跌幅：-5.21%（閾值 -5%）
 
-💰 現在換人民幣最划算，
-趕快去淘寶下單吧 🛒
+⚠️ 注意持倉，留意進場時機
 ```
 
 **Bot Commands**
@@ -82,10 +83,9 @@ S&P 500
 ## Architecture
 
 ```
-GitHub Actions (every 10 min)
-  ├── rate_agent.py     → CNY/TWD 7-day low alert
-  ├── stock_agent.py    → Market index 1-hour drop alerts
-  └── daily_report.py   → Morning report at 09:00 TWD
+GitHub Actions（台股盤中 UTC 01-05 / 美股盤中 UTC 13-21）
+  ├── stock_agent.py    → 大盤 & 個股 1-hour drop alerts
+  └── daily_report.py   → Morning report at 09:05 TWD（UTC 01:05, 獨立 cron）
 
 Render (always-on webhook server)
   └── bot_server.py (Flask)
@@ -101,12 +101,16 @@ Shared
 
 ## Alert Thresholds
 
-| Monitor | Condition | Cooldown |
-|---|---|---|
-| S&P 500 | 1-hour drop ≥ 2% | 60 min |
-| NASDAQ | 1-hour drop ≥ 2.5% | 60 min |
-| TAIEX | 1-hour drop ≥ 2% | 60 min |
-| CNY/TWD | New 7-day low | 60 min |
+| Monitor | Ticker | Condition | Cooldown |
+|---|---|---|---|
+| S&P 500 | ^GSPC | 1-hour drop ≥ 2% | 60 min |
+| NASDAQ | ^IXIC | 1-hour drop ≥ 2.5% | 60 min |
+| TAIEX | ^TWII | 1-hour drop ≥ 2% | 60 min |
+| 台積電 | 2330.TW | 1-hour drop ≥ 5% | 60 min |
+| 元大台灣50 | 0050.TW | 1-hour drop ≥ 5% | 60 min |
+| VTI | VTI | 1-hour drop ≥ 3% | 60 min |
+| VT | VT | 1-hour drop ≥ 3% | 60 min |
+| TQQQ | TQQQ | 1-hour drop ≥ 10% | 60 min |
 
 ---
 
@@ -167,9 +171,9 @@ Go to **Actions → 市場監控 → Run workflow** to access manual options:
 | Exchange Rate API | [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-api) — free, no key |
 | Stock Price API | [yfinance](https://github.com/ranaroussi/yfinance) — free, no key |
 | Scheduled Jobs | GitHub Actions (free tier) |
-| Check Frequency | Every 10 minutes |
-| Daily Report Time | 09:00 Taiwan time (UTC+8) |
-| Alert Cooldown | 60 minutes per index/rate |
+| Check Frequency | 台股盤中每10分鐘（UTC 01–05）；美股盤中每10分鐘（UTC 13–21） |
+| Daily Report Time | 09:05 Taiwan time (UTC+8) |
+| Alert Cooldown | 60 minutes per ticker |
 | Bot Server | Render free tier (Flask + Gunicorn) |
 | Notifications | Telegram Bot API |
 
@@ -177,7 +181,7 @@ Go to **Actions → 市場監控 → Run workflow** to access manual options:
 
 ## Notes
 
-- GitHub Actions free tier: 2,000 min/month. Running every 10 minutes uses ~1,500 min/month
+- GitHub Actions free tier: 2,000 min/month. Market-hours-only schedule uses ~650 min/month
 - Render free tier sleeps after 15 minutes of inactivity; bot wakes automatically on command (first response may take a few seconds)
 - Exchange rates update once per day; stock prices from yfinance reflect the latest market session
 - Market data is for reference only; actual rates and prices may vary by platform
