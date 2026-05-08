@@ -10,6 +10,15 @@ from utils import (
     record_daily, save_state, send_telegram,
 )
 
+US_INDICES = {
+    "^GSPC": {"name": "S&P 500"},
+    "^IXIC": {"name": "NASDAQ Composite"},
+}
+
+TW_INDICES = {
+    "^TWII": {"name": "加權指數（TAIEX）"},
+}
+
 US_STOCKS = {
     "VT":   {"threshold": 5.0},
     "VTI":  {"threshold": 5.0},
@@ -105,6 +114,8 @@ def _rate_section(label: str, rate: float, history_7d: list, history_30d: list, 
 
 
 def build_message(
+    us_indices: dict,
+    tw_indices: dict,
     us_stocks: dict,
     tw_stocks: dict,
     usd_rate: float,
@@ -117,16 +128,30 @@ def build_message(
     today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d")
     lines = [f"📊 每日市場日報 {today}", ""]
 
-    # 美股
+    # 美股大盤
+    if us_indices:
+        lines.append("🇺🇸 美股大盤")
+        for ticker, data in us_indices.items():
+            name = US_INDICES[ticker]["name"]
+            lines.append(f"  {name:<22} {data['current']:>10,.2f}  {_pct_str(data['change_pct'])}")
+
+    # 美股個股
     if us_stocks:
-        lines.append("🇺🇸 美股")
+        lines += ["", "🇺🇸 美股"]
         for ticker, data in us_stocks.items():
             threshold = US_STOCKS[ticker]["threshold"]
             pct = data["change_pct"]
             alert = f"  ⚠️ 跌>{threshold}%，已觸發通知" if pct <= -threshold else ""
             lines.append(f"  {ticker:<5} ${data['current']}  {_pct_str(pct)}{alert}")
 
-    # 台股
+    # 台股大盤
+    if tw_indices:
+        lines += ["", "🇹🇼 台股大盤"]
+        for ticker, data in tw_indices.items():
+            name = TW_INDICES[ticker]["name"]
+            lines.append(f"  {name}  {data['current']:,.2f}  {_pct_str(data['change_pct'])}")
+
+    # 台股個股
     if tw_stocks:
         lines += ["", "🇹🇼 台股"]
         for ticker, data in tw_stocks.items():
@@ -162,6 +187,18 @@ def main():
 
     print("開始收集市場資料...")
 
+    us_indices = {}
+    for ticker, config in US_INDICES.items():
+        info = fetch_stock(ticker)
+        if info:
+            us_indices[ticker] = info
+
+    tw_indices = {}
+    for ticker, config in TW_INDICES.items():
+        info = fetch_stock(ticker)
+        if info:
+            tw_indices[ticker] = info
+
     us_stocks = {}
     for ticker in US_STOCKS:
         info = fetch_stock(ticker)
@@ -182,7 +219,7 @@ def main():
     cny_7d = fetch_history("cny", "twd", 7)
     cny_30d = fetch_history("cny", "twd", 30)
 
-    msg = build_message(us_stocks, tw_stocks, usd_rate, usd_7d, usd_30d, cny_rate, cny_7d, cny_30d)
+    msg = build_message(us_indices, tw_indices, us_stocks, tw_stocks, usd_rate, usd_7d, usd_30d, cny_rate, cny_7d, cny_30d)
     send_telegram(msg)
 
     state = record_daily(state)
