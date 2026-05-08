@@ -12,6 +12,14 @@ MARKET_INDICES = {
     "^TWII": {"name": "加權指數（TAIEX）",   "threshold": 2.0, "region": "🇹🇼"},
 }
 
+INDIVIDUAL_STOCKS = {
+    "2330.TW": {"name": "台積電",                 "threshold": 5.0,  "region": "🇹🇼"},
+    "0050.TW": {"name": "元大台灣50",              "threshold": 5.0,  "region": "🇹🇼"},
+    "VTI":     {"name": "Vanguard Total Market",  "threshold": 3.0,  "region": "🇺🇸"},
+    "VT":      {"name": "Vanguard Total World",   "threshold": 3.0,  "region": "🇺🇸"},
+    "TQQQ":    {"name": "ProShares UltraPro QQQ", "threshold": 10.0, "region": "🇺🇸"},
+}
+
 COOLDOWN_MINUTES = 60
 
 
@@ -52,6 +60,20 @@ def build_alert(ticker: str, config: dict, info: dict) -> str:
     ])
 
 
+def build_stock_alert(ticker: str, config: dict, info: dict) -> str:
+    now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y/%m/%d %H:%M")
+    return "\n".join([
+        f"📉 {config['region']} 個股下跌警報 {now}",
+        "",
+        f"{config['name']}（{ticker}）",
+        f"現值：{info['current']:,.2f}",
+        f"1小時前：{info['price_1h_ago']:,.2f}",
+        f"近1小時跌幅：{info['change_pct']}%（閾值 -{config['threshold']}%）",
+        "",
+        "⚠️ 注意持倉，留意進場時機",
+    ])
+
+
 def main():
     import os
     test_mode = os.getenv("TEST_ALERTS", "").lower() in ("true", "1")
@@ -85,6 +107,35 @@ def main():
             msg = build_alert(ticker, config, info)
             if test_mode:
                 msg = msg.replace("⚠️ 大盤急跌，留意進場時機", f"🔔 這是測試通知，實際觸發條件：近1小時跌幅 ≥ {config['threshold']}%")
+            send_telegram(msg)
+            if not test_mode:
+                state = record_alert(state, alert_key)
+        else:
+            print(f"[{ticker}] 跌幅未達閾值，不通知")
+
+    for ticker, config in INDIVIDUAL_STOCKS.items():
+        print(f"檢查 {config['name']}（{ticker}）...")
+        alert_key = f"stock_{ticker}_last_alert_time"
+
+        if not test_mode and not can_send_alert(state, alert_key, COOLDOWN_MINUTES):
+            print(f"[{ticker}] 警報冷卻中，跳過")
+            continue
+
+        info = get_1h_change(ticker)
+        if not info:
+            if test_mode:
+                info = {"current": 0.0, "price_1h_ago": 0.0, "change_pct": 0.0}
+                print(f"[{ticker}] 市場收盤，使用模擬資料")
+            else:
+                continue
+
+        print(f"[{ticker}] 現值: {info['current']}, 近1小時跌幅: {info['change_pct']}%")
+
+        should_alert = test_mode or info["change_pct"] <= -config["threshold"]
+        if should_alert:
+            msg = build_stock_alert(ticker, config, info)
+            if test_mode:
+                msg = msg.replace("⚠️ 注意持倉，留意進場時機", f"🔔 這是測試通知，實際觸發條件：近1小時跌幅 ≥ {config['threshold']}%")
             send_telegram(msg)
             if not test_mode:
                 state = record_alert(state, alert_key)

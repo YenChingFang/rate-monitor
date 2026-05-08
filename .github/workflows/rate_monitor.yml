@@ -41,12 +41,6 @@ jobs:
       - name: 安裝套件
         run: pip install requests yfinance
 
-      - name: 人民幣匯率監控
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python rate_agent.py
-
       - name: 大盤即時監控
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
