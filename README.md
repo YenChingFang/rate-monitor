@@ -22,10 +22,17 @@ A Telegram bot that monitors exchange rates and global market indices, sends a d
 ```
 📊 每日市場日報 2026/05/07
 
+🇺🇸 美股大盤
+  S&P 500                5,102.45  -2.07% 📉
+  NASDAQ Composite      16,234.10  -1.52% 📉
+
 🇺🇸 美股
   VT    $152.12  +0.81% 🟢
   VTI   $356.99  -0.83% 📉
   TQQQ  $67.39   -4.19% 📉
+
+🇹🇼 台股大盤
+  加權指數（TAIEX）  19,234.56  +0.52% 🟢
 
 🇹🇼 台股
   0050 元大台灣50  NT$185.5  +1.50% 🟢
