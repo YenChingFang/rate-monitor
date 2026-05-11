@@ -164,7 +164,8 @@ def build_message(
     # 人民幣匯率
     lines += [""] + _rate_section("🀄 人民幣匯率", cny_rate, cny_7d, cny_30d, "CNY")
 
-    return "\n".join(lines)
+    return "
+".join(lines)
 
 
 # ── 主流程 ─────────────────────────────────────────────
@@ -172,13 +173,8 @@ def build_message(
 def main():
     import os
     force = os.getenv("FORCE_DAILY", "").lower() in ("true", "1")
-    daily_trigger = os.getenv("DAILY_TRIGGER", "").lower() in ("true", "1")
 
-    print(f"[{datetime.now(timezone.utc)}] 日報檢查{'（強制模式）' if force else '（專屬 cron）' if daily_trigger else ''}...")
-
-    if not force and not daily_trigger:
-        print("非日報時間，跳過")
-        return
+    print(f"[{datetime.now(timezone.utc)}] 日報執行{'（強制模式）' if force else ''}...")
 
     state = load_state()
     if not force and already_sent_daily(state):
