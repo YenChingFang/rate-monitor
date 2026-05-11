@@ -164,8 +164,7 @@ def build_message(
     # 人民幣匯率
     lines += [""] + _rate_section("🀄 人民幣匯率", cny_rate, cny_7d, cny_30d, "CNY")
 
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 
 # ── 主流程 ─────────────────────────────────────────────
