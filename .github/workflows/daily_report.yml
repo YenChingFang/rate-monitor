@@ -1,0 +1,47 @@
+name: 每日市場日報
+
+on:
+  schedule:
+    - cron: '5 1 * * 1-5'  # 台灣時間 09:05（UTC 01:05）
+  workflow_dispatch:
+    inputs:
+      force_daily:
+        description: '強制發送（忽略今日已發紀錄）'
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 程式碼
+        uses: actions/checkout@v4
+
+      - name: 還原狀態紀錄
+        uses: actions/cache@v4
+        with:
+          path: last_alert.json
+          key: last-alert-${{ github.run_id }}
+          restore-keys: |
+            last-alert-
+
+      - name: 安裝套件
+        run: pip install requests yfinance
+
+      - name: 每日市場日報
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FORCE_DAILY: ${{ inputs.force_daily }}
+        run: python daily_report.py
+
+      - name: 儲存狀態紀錄
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: last_alert.json
+          key: last-alert-${{ github.run_id }}
