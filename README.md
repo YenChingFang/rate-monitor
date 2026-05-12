@@ -161,11 +161,16 @@ This sets the webhook URL and registers slash commands for autocomplete in Teleg
 
 ### 5. Manual Triggers (GitHub Actions)
 
-Go to **Actions → 市場監控 → Run workflow** to access manual options:
+**Actions → 每日市場日報 → Run workflow**
 
 | Option | Description |
 |---|---|
-| Force daily report | Send the daily report immediately, ignoring time |
+| Force daily report | Send the daily report immediately, ignoring the already-sent check |
+
+**Actions → 市場監控 → Run workflow**
+
+| Option | Description |
+|---|---|
 | Test notification | Send a Telegram ping to confirm the system works |
 | Test alerts | Send sample market drop alerts with real current prices |
 
