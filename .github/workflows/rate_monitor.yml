@@ -56,10 +56,7 @@ jobs:
           now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y/%m/%d %H:%M')
           token = os.environ['TELEGRAM_TOKEN']
           chat_id = os.environ['TELEGRAM_CHAT_ID']
-          text = f'✅ 系統測試通知
-{now}
-
-監控系統運作正常 🟢'
+          text = f'✅ 系統測試通知\n{now}\n\n監控系統運作正常 🟢'
           requests.post(f'https://api.telegram.org/bot{token}/sendMessage', json={'chat_id': chat_id, 'text': text}, timeout=10)
           print('測試通知發送完成')
           "
